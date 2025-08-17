@@ -3,7 +3,7 @@ name: Docker Image CI
 on:
   push:
     branches: [ "main" ]
-    tags: [ "v*" ]
+    tags: [ "v*" ] # 匹配类似 v1.0.0 的标签
   pull_request:
     branches: [ "main" ]
 
@@ -40,11 +40,11 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=ref,event=branch
-            type=ref,event=branch,format=latest
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
+            type=ref,event=branch # 始终生成分支名称作为标签 (例如: main)
+            type=semver,pattern={{version}} # 从v*标签中提取版本号 (例如: 1.0.0)
+            type=semver,pattern={{major}}.{{minor}} # 从v*标签中提取主次版本号 (例如: 1.0)
+            type=semver,pattern={{major}} # 从v*标签中提取主版本号 (例如: 1)
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }} # 当且仅当在main分支上时，生成latest标签
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
