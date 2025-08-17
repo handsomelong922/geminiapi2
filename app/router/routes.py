@@ -6,10 +6,22 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from app.core.security import verify_auth_token
 from app.config.config import settings
+from app.core.security import verify_auth_token
 from app.log.logger import get_routes_logger
-from app.router import error_log_routes, gemini_routes, openai_routes, config_routes, scheduler_routes, stats_routes, version_routes, openai_compatiable_routes, vertex_express_routes, files_routes, key_routes
+from app.router import (
+    config_routes,
+    error_log_routes,
+    files_routes,
+    gemini_routes,
+    key_routes,
+    openai_compatiable_routes,
+    openai_routes,
+    scheduler_routes,
+    stats_routes,
+    version_routes,
+    vertex_express_routes,
+)
 from app.service.key.key_manager import get_key_manager_instance
 from app.service.stats.stats_service import StatsService
 
@@ -69,9 +81,12 @@ def setup_page_routes(app: FastAPI) -> None:
 
             if verify_auth_token(auth_token):
                 logger.info("Successful authentication")
-                response = RedirectResponse(url="/config", status_code=302)
+                response = RedirectResponse(url="/keys", status_code=302)
                 response.set_cookie(
-                    key="auth_token", value=auth_token, httponly=True, max_age=settings.ADMIN_SESSION_EXPIRE
+                    key="auth_token",
+                    value=auth_token,
+                    httponly=True,
+                    max_age=settings.ADMIN_SESSION_EXPIRE,
                 )
                 return response
             logger.warning("Failed authentication attempt with invalid token")
@@ -91,7 +106,9 @@ def setup_page_routes(app: FastAPI) -> None:
 
             key_manager = await get_key_manager_instance()
             keys_status = await key_manager.get_keys_by_status()
-            total_keys = len(keys_status["valid_keys"]) + len(keys_status["invalid_keys"])
+            total_keys = len(keys_status["valid_keys"]) + len(
+                keys_status["invalid_keys"]
+            )
             valid_key_count = len(keys_status["valid_keys"])
             invalid_key_count = len(keys_status["invalid_keys"])
 
@@ -133,7 +150,7 @@ def setup_page_routes(app: FastAPI) -> None:
                     },
                 },
             )
-            
+
     @app.get("/config", response_class=HTMLResponse)
     async def config_page(request: Request):
         """配置编辑页面"""
@@ -142,13 +159,15 @@ def setup_page_routes(app: FastAPI) -> None:
             if not auth_token or not verify_auth_token(auth_token):
                 logger.warning("Unauthorized access attempt to config page")
                 return RedirectResponse(url="/", status_code=302)
-                
+
             logger.info("Config page accessed successfully")
-            return templates.TemplateResponse("config_editor.html", {"request": request})
+            return templates.TemplateResponse(
+                "config_editor.html", {"request": request}
+            )
         except Exception as e:
             logger.error(f"Error accessing config page: {str(e)}")
             raise
-            
+
     @app.get("/logs", response_class=HTMLResponse)
     async def logs_page(request: Request):
         """错误日志页面"""
@@ -157,7 +176,7 @@ def setup_page_routes(app: FastAPI) -> None:
             if not auth_token or not verify_auth_token(auth_token):
                 logger.warning("Unauthorized access attempt to logs page")
                 return RedirectResponse(url="/", status_code=302)
-                
+
             logger.info("Logs page accessed successfully")
             return templates.TemplateResponse("error_logs.html", {"request": request})
         except Exception as e:
@@ -187,6 +206,7 @@ def setup_api_stats_routes(app: FastAPI) -> None:
     Args:
         app: FastAPI应用程序实例
     """
+
     @app.get("/api/stats/details")
     async def api_stats_details(request: Request, period: str):
         """获取指定时间段内的 API 调用详情"""
@@ -201,8 +221,12 @@ def setup_api_stats_routes(app: FastAPI) -> None:
             details = await stats_service.get_api_call_details(period)
             return details
         except ValueError as e:
-            logger.warning(f"Invalid period requested for API stats details: {period} - {str(e)}")
+            logger.warning(
+                f"Invalid period requested for API stats details: {period} - {str(e)}"
+            )
             return {"error": str(e)}, 400
         except Exception as e:
-            logger.error(f"Error fetching API stats details for period {period}: {str(e)}")
+            logger.error(
+                f"Error fetching API stats details for period {period}: {str(e)}"
+            )
             return {"error": "Internal server error"}, 500

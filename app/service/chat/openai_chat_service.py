@@ -196,6 +196,10 @@ def _build_payload(
     
     # 处理 max_tokens 参数
     _validate_and_set_max_tokens(payload, request.max_tokens, logger)
+
+    # 处理 n 参数
+    if request.n is not None and request.n > 0:
+        payload["generationConfig"]["candidateCount"] = request.n
     
     if request.model.endswith("-image") or request.model.endswith("-image-generation"):
         payload["generationConfig"]["responseModalities"] = ["Text", "Image"]
@@ -358,39 +362,24 @@ class OpenAIChatService:
         logger.info(
             f"Fake streaming enabled for model: {model}. Calling non-streaming endpoint."
         )
-        keep_sending_empty_data = True
-
-        async def send_empty_data_locally() -> AsyncGenerator[str, None]:
-            """定期发送空数据以保持连接"""
-            while keep_sending_empty_data:
-                await asyncio.sleep(settings.FAKE_STREAM_EMPTY_DATA_INTERVAL_SECONDS)
-                if keep_sending_empty_data:
-                    empty_chunk = self.response_handler.handle_response({}, model, stream=True, finish_reason='stop', usage_metadata=None)
-                    yield f"data: {json.dumps(empty_chunk)}\n\n"
-                    logger.debug("Sent empty data chunk for fake stream heartbeat.")
-
-        empty_data_generator = send_empty_data_locally()
+        
         api_response_task = asyncio.create_task(
             self.api_client.generate_content(payload, model, api_key)
         )
 
+        i = 0
         try:
             while not api_response_task.done():
-                try:
-                    next_empty_chunk = await asyncio.wait_for(
-                        empty_data_generator.__anext__(), timeout=0.1
-                    )
-                    yield next_empty_chunk
-                except asyncio.TimeoutError:
-                    pass
-                except (
-                    StopAsyncIteration
-                ):
-                    break
-
-            response = await api_response_task
+                i = i + 1
+                """定期发送空数据以保持连接"""
+                if i >= settings.FAKE_STREAM_EMPTY_DATA_INTERVAL_SECONDS :
+                    i = 0
+                    empty_chunk = self.response_handler.handle_response({}, model, stream=True, finish_reason='stop', usage_metadata=None)
+                    yield f"data: {json.dumps(empty_chunk)}\n\n"
+                    logger.debug("Sent empty data chunk for fake stream heartbeat.")
+                await asyncio.sleep(1)
         finally:
-            keep_sending_empty_data = False
+            response = await api_response_task
 
         if response and response.get("candidates"):
             response = self.response_handler.handle_response(response, model, stream=True, finish_reason='stop', usage_metadata=response.get("usageMetadata", {}))
