@@ -38,6 +38,18 @@ endblock %} {% block head_extra_styles %}
     }
   }
 
+  /* 让图表卡片在网格中占满整行 */
+  .stats-card.chart-wide {
+    grid-column: 1 / -1;
+  }
+  /* 图表容器固定高度，配合 Chart.js maintainAspectRatio:false */
+  .chart-container {
+    height: 300px;
+  }
+  @media (max-width: 640px) {
+    .chart-container { height: 220px; }
+  }
+
   /* 统计卡片样式 */
   .stats-card {
     background-color: rgba(255, 255, 255, 0.95);
@@ -1096,31 +1108,15 @@ endblock %} {% block head_extra_styles %}
   }
 </style>
 {% endblock %} {% block head_extra_scripts %}
-<!-- keys_status.js needs to be loaded in head because it might be used by inline scripts -->
-<script src="/static/js/keys_status.js"></script>
+<!-- Chart.js for time-series chart -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
+<!-- Load page script with defer to guarantee DOM is ready and keep execution order -->
+<script src="/static/js/keys_status.js" defer></script>
 {% endblock %} {% block content %}
 <div class="container max-w-6xl mx-auto px-4">
   <!-- Increased max-width -->
   <div class="glass-card rounded-2xl shadow-xl p-6 md:p-8">
     <div class="absolute top-6 right-6 flex items-center gap-3">
-      <!-- 自动刷新开关 -->
-      <div class="flex items-center text-sm select-none font-semibold" style="color: #1f2937 !important;">
-        <span class="mr-2">自动刷新</span>
-        <div
-          class="relative inline-block w-10 mr-2 align-middle select-none transition duration-200 ease-in"
-        >
-          <input
-            type="checkbox"
-            name="autoRefreshToggle"
-            id="autoRefreshToggle"
-            class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer"
-          />
-          <label
-            for="autoRefreshToggle"
-            class="toggle-label block overflow-hidden h-6 rounded-full bg-gray-300 cursor-pointer"
-          ></label>
-        </div>
-      </div>
       <!-- 手动刷新按钮 -->
       <button
         class="bg-white bg-opacity-20 hover:bg-opacity-30 rounded-full w-8 h-8 flex items-center justify-center text-primary-600 transition-all duration-300"
@@ -1263,7 +1259,53 @@ endblock %} {% block head_extra_styles %}
           </div>
         </div>
       </div>
-    </div>
+
+      <!-- 可切换时间区间的成功/失败图表卡片 -->
+      <div class="stats-card chart-wide">
+        <div class="stats-card-header">
+          <h3 class="stats-card-title">
+            <i class="fas fa-chart-bar"></i>
+            <span>调用趋势图</span>
+          </h3>
+          <div class="flex items-center gap-2 text-xs">
+            <button id="chartBtn1h" class="px-2 py-1 rounded bg-gray-200 hover:bg-gray-300 text-gray-700">1小时</button>
+            <button id="chartBtn8h" class="px-2 py-1 rounded bg-gray-200 hover:bg-gray-300 text-gray-700">8小时</button>
+            <button id="chartBtn24h" class="px-2 py-1 rounded bg-gray-200 hover:bg-gray-300 text-gray-700">24小时</button>
+          </div>
+        </div>
+        <div class="p-4 chart-container">
+          <canvas id="apiStatsChart"></canvas>
+        </div>
+      </div>
+
+      <!-- 值得注意的 Key 卡片（错误码统计，可切换） -->
+      <div class="stats-card chart-wide">
+        <div class="stats-card-header">
+          <h3 class="stats-card-title">
+            <i class="fas fa-exclamation-circle"></i>
+            <span>值得注意的Key（24h内错误码最多）</span>
+          </h3>
+          <div class="flex items-center gap-2 text-xs">
+            <button id="attentionErr429" class="px-2 py-1 rounded bg-gray-200 hover:bg-gray-300 text-gray-700" title="429 Too Many Requests">429</button>
+            <button id="attentionErr403" class="px-2 py-1 rounded bg-gray-200 hover:bg-gray-300 text-gray-700" title="403 Forbidden">403</button>
+            <button id="attentionErr400" class="px-2 py-1 rounded bg-gray-200 hover:bg-gray-300 text-gray-700" title="400 Bad Request">400</button>
+            <div class="flex items-center gap-1 ml-2">
+              <input id="attentionErrCustom" type="number" min="100" max="599" placeholder="自定义" class="form-input h-7 w-20 px-2 py-1 text-xs border rounded focus:ring-primary-500 focus:border-primary-500" />
+              <button id="attentionErrGo" class="px-2 py-1 rounded bg-blue-500 hover:bg-blue-600 text-white" title="查询">查询</button>
+            </div>
+            <div class="flex items-center gap-1 ml-3">
+              <label for="attentionLimitInput" class="text-xs text-gray-600">数量</label>
+              <input id="attentionLimitInput" type="number" min="1" max="1000" value="10" class="form-input h-7 w-20 px-2 py-1 text-xs border rounded focus:ring-primary-500 focus:border-primary-500" />
+            </div>
+          </div>
+        </div>
+        <div class="p-4">
+          <ul id="attentionKeysList" class="space-y-2">
+            <li class="text-center text-gray-500 py-2">加载中...</li>
+          </ul>
+        </div>
+      </div>
+  </div>
 
     <!-- 有效密钥区域 -->
     <div class="stats-card mb-6 animate-fade-in" style="animation-delay: 0.2s">
@@ -1873,7 +1915,8 @@ endblock %} {% block head_extra_styles %}
 <!-- 操作结果模态框 -->
 <div
   id="resultModal"
-  class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden"
+  class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden"
+  style="z-index: 1001;"
 >
   <div
     class="bg-white rounded-2xl p-0 shadow-2xl max-w-lg w-full animate-fade-in border border-gray-200"

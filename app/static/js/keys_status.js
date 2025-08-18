@@ -346,7 +346,8 @@ function showResetModal(type) {
   // 设置确认按钮事件
   confirmButton.onclick = () => executeResetAll(type);
 
-  // 显示模态框
+  // 显示模态框，确保位于最上层
+  modalElement.style.zIndex = '1001';
   modalElement.classList.remove("hidden");
 }
 
@@ -1188,48 +1189,6 @@ function initializeKeySelectionListeners() {
   setupEventListenersForList("invalidKeys", "invalid");
 }
 
-function initializeAutoRefreshControls() {
-  const autoRefreshToggle = document.getElementById("autoRefreshToggle");
-  const autoRefreshIntervalTime = 60000; // 60秒
-  let autoRefreshTimer = null;
-
-  function startAutoRefresh() {
-    if (autoRefreshTimer) return;
-    console.log("启动自动刷新...");
-    showNotification("自动刷新已启动", "info", 2000);
-    autoRefreshTimer = setInterval(() => {
-      console.log("自动刷新 keys_status 页面...");
-      location.reload();
-    }, autoRefreshIntervalTime);
-  }
-
-  function stopAutoRefresh() {
-    if (autoRefreshTimer) {
-      console.log("停止自动刷新...");
-      showNotification("自动刷新已停止", "info", 2000);
-      clearInterval(autoRefreshTimer);
-      autoRefreshTimer = null;
-    }
-  }
-
-  if (autoRefreshToggle) {
-    const isAutoRefreshEnabled =
-      localStorage.getItem("autoRefreshEnabled") === "true";
-    autoRefreshToggle.checked = isAutoRefreshEnabled;
-    if (isAutoRefreshEnabled) {
-      startAutoRefresh();
-    }
-    autoRefreshToggle.addEventListener("change", () => {
-      if (autoRefreshToggle.checked) {
-        localStorage.setItem("autoRefreshEnabled", "true");
-        startAutoRefresh();
-      } else {
-        localStorage.setItem("autoRefreshEnabled", "false");
-        stopAutoRefresh();
-      }
-    });
-  }
-}
 
 // Debounce function
 function debounce(func, delay) {
@@ -1478,6 +1437,251 @@ function initializeDropdownMenu() {
   }
 }
 
+// --- Chart: API success/failure over time ---
+let apiStatsChart = null;
+
+function buildChartConfig(labels, successData, failureData) {
+  return {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: '成功',
+          data: successData,
+          borderColor: 'rgba(16,185,129,1)', // emerald-500
+          backgroundColor: 'rgba(16,185,129,0.15)',
+          tension: 0.3,
+          fill: true,
+          pointRadius: 2,
+        },
+        {
+          label: '失败',
+          data: failureData,
+          borderColor: 'rgba(239,68,68,1)', // red-500
+          backgroundColor: 'rgba(239,68,68,0.15)',
+          tension: 0.3,
+          fill: true,
+          pointRadius: 2,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'top' },
+        tooltip: { mode: 'index', intersect: false },
+      },
+      interaction: { mode: 'nearest', axis: 'x', intersect: false },
+      scales: {
+        x: { title: { display: true, text: '时间' } },
+        y: { title: { display: true, text: '调用次数' }, beginAtZero: true, ticks: { precision: 0 } },
+      },
+    },
+  };
+}
+
+async function fetchPeriodDetails(period) {
+  // Uses backend endpoint /api/stats/details?period={period}
+  return await fetchAPI(`/api/stats/details?period=${period}`);
+}
+
+function bucketizeDetails(period, details) {
+  // details is expected to be an array of call records with fields: timestamp, status
+  // Build buckets depending on period
+  const buckets = new Map();
+  const addToBucket = (key, isSuccess) => {
+    if (!buckets.has(key)) buckets.set(key, { success: 0, failure: 0 });
+    const obj = buckets.get(key);
+    if (isSuccess) obj.success += 1; else obj.failure += 1;
+  };
+
+  const toKey = (ts) => {
+    const d = new Date(ts);
+    if (period === '1m') {
+      // bucket by second within last minute
+      const mm = String(d.getMinutes()).padStart(2,'0');
+      const ss = String(d.getSeconds()).padStart(2,'0');
+      return `${mm}:${ss}`;
+    } else if (period === '1h') {
+      // bucket by minute
+      const HH = String(d.getHours()).padStart(2,'0');
+      const mm = String(d.getMinutes()).padStart(2,'0');
+      return `${HH}:${mm}`;
+    } else if (period === '8h') {
+      // bucket by hour for 8h window (same as 24h)
+      const MM = String(d.getMonth()+1).padStart(2,'0');
+      const DD = String(d.getDate()).padStart(2,'0');
+      const HH = String(d.getHours()).padStart(2,'0');
+      return `${MM}-${DD} ${HH}:00`;
+    } else {
+      // 24h: bucket by hour
+      const MM = String(d.getMonth()+1).padStart(2,'0');
+      const DD = String(d.getDate()).padStart(2,'0');
+      const HH = String(d.getHours()).padStart(2,'0');
+      return `${MM}-${DD} ${HH}:00`;
+    }
+  };
+
+  (details || []).forEach((call) => {
+    const key = toKey(call.timestamp);
+    const isSuccess = call.status === 'success';
+    addToBucket(key, isSuccess);
+  });
+
+  // sort labels chronologically by parsing back to date when possible
+  const labels = Array.from(buckets.keys()).sort((a,b)=>{
+    // Try to create date objects relative to today for ordering; fallback to string compare
+    const da = Date.parse(a) || 0;
+    const db = Date.parse(b) || 0;
+    if (da && db) return da - db;
+    return a.localeCompare(b);
+  });
+  const successData = labels.map(l => buckets.get(l).success);
+  const failureData = labels.map(l => buckets.get(l).failure);
+  return { labels, successData, failureData };
+}
+
+async function renderApiChart(period) {
+  const canvas = document.getElementById('apiStatsChart');
+  if (!canvas || typeof Chart === 'undefined') return;
+  try {
+    const details = await fetchPeriodDetails(period);
+    const { labels, successData, failureData } = bucketizeDetails(period, details || []);
+    const cfg = buildChartConfig(labels, successData, failureData);
+    if (apiStatsChart) {
+      apiStatsChart.destroy();
+    }
+    apiStatsChart = new Chart(canvas.getContext('2d'), cfg);
+  } catch (e) {
+    console.error('Failed to render chart:', e);
+  }
+}
+
+// --- Helpers for Attention Keys panel ---
+// track current active status code tab
+let currentStatus = 429;
+
+function getLimit() {
+  const el = document.getElementById('attentionLimitInput');
+  const v = parseInt(el && el.value, 10);
+  if (isNaN(v)) return 10;
+  // clamp between 1 and 1000 to match input limits
+  return Math.min(1000, Math.max(1, v));
+}
+
+async function fetchAndRenderAttentionKeys(statusCode = 429, limit = 10) {
+  const listEl = document.getElementById('attentionKeysList');
+  if (!listEl) return;
+  try {
+    const data = await fetchAPI(`/api/stats/attention-keys?status_code=${statusCode}&limit=${limit}`);
+    listEl.innerHTML = '';
+    if (!data || (Array.isArray(data) && data.length === 0) || data.error) {
+      listEl.innerHTML = '<li class="text-center text-gray-500 py-2">暂无需要注意的Key</li>';
+      return;
+    }
+    data.forEach(item => {
+      const li = document.createElement('li');
+      li.className = 'flex items-center justify-between bg-white rounded border px-3 py-2';
+      const masked = item.key ? `${item.key.substring(0,4)}...${item.key.substring(item.key.length-4)}` : 'N/A';
+      const code = item.status_code ?? statusCode;
+      li.innerHTML = `
+        \u003cdiv class=\"flex items-center gap-3\"\u003e
+          \u003cspan class=\"font-mono text-sm\"\u003e${masked}\u003c/span\u003e
+          \u003cspan class=\"text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded\"\u003e${code}: ${item.count}\u003c/span\u003e
+        \u003c/div\u003e
+        \u003cdiv class=\"flex items-center gap-2\"\u003e
+          \u003cbutton class=\"px-2 py-1 text-xs rounded bg-success-600 hover:bg-success-700 text-white\" title=\"验证此Key\"\u003e验证\u003c/button\u003e
+          \u003cbutton class=\"px-2 py-1 text-xs rounded bg-blue-600 hover:bg-blue-700 text-white\" title=\"查看24小时详情\"\u003e详情\u003c/button\u003e
+          \u003cbutton class=\"px-2 py-1 text-xs rounded bg-blue-500 hover:bg-blue-600 text-white\" title=\"复制Key\"\u003e复制\u003c/button\u003e
+          \u003cbutton class=\"px-2 py-1 text-xs rounded bg-red-800 hover:bg-red-900 text-white\" title=\"删除此Key\"\u003e删除\u003c/button\u003e
+        \u003c/div\u003e`;
+      const [verifyBtn, detailBtn, copyBtn, deleteBtn] = li.querySelectorAll('button');
+      verifyBtn.addEventListener('click', (e) => verifyKey(item.key, e.currentTarget));
+      detailBtn.addEventListener('click', () => window.showKeyUsageDetails(item.key));
+      copyBtn.addEventListener('click', () => copyKey(item.key));
+      deleteBtn.addEventListener('click', (e) => showSingleKeyDeleteConfirmModal(item.key, e.currentTarget));
+      listEl.appendChild(li);
+    });
+  } catch (e) {
+    listEl.innerHTML = `<li class="text-center text-red-500 py-2">加载失败: ${e.message}</li>`;
+  }
+}
+
+function initChartControls() {
+  const btn1h = document.getElementById('chartBtn1h');
+  const btn8h = document.getElementById('chartBtn8h');
+  const btn24h = document.getElementById('chartBtn24h');
+  const setActive = (activeBtn) => {
+    [btn1h, btn8h, btn24h].forEach(btn => {
+      if (!btn) return;
+      if (btn === activeBtn) {
+        btn.classList.remove('bg-gray-200');
+        btn.classList.add('bg-primary-600','text-white');
+      } else {
+        btn.classList.add('bg-gray-200');
+        btn.classList.remove('bg-primary-600','text-white');
+      }
+    });
+  };
+
+  if (btn1h) btn1h.addEventListener('click', async () => { setActive(btn1h); await renderApiChart('1h'); });
+  if (btn8h) btn8h.addEventListener('click', async () => { setActive(btn8h); await renderApiChart('8h'); });
+  if (btn24h) btn24h.addEventListener('click', async () => { setActive(btn24h); await renderApiChart('24h'); });
+
+  // default period
+  if (btn1h) setActive(btn1h);
+  renderApiChart('1h');
+}
+
+function initAttentionKeysControls() {
+  const btn429 = document.getElementById('attentionErr429');
+  const btn403 = document.getElementById('attentionErr403');
+  const btn400 = document.getElementById('attentionErr400');
+  // 修复：补充获取数量输入框，避免未声明变量导致初始化报错
+  const limitInput = document.getElementById('attentionLimitInput');
+  const setActive = (activeBtn) => {
+    [btn429, btn403, btn400].forEach(btn => {
+      if (!btn) return;
+      if (btn === activeBtn) {
+        btn.classList.remove('bg-gray-200');
+        btn.classList.add('bg-primary-600','text-white');
+      } else {
+        btn.classList.add('bg-gray-200');
+        btn.classList.remove('bg-primary-600','text-white');
+      }
+    });
+  };
+  if (btn429) btn429.addEventListener('click', () => { setActive(btn429); currentStatus = 429; fetchAndRenderAttentionKeys(429, getLimit()); });
+  if (btn403) btn403.addEventListener('click', () => { setActive(btn403); currentStatus = 403; fetchAndRenderAttentionKeys(403, getLimit()); });
+  if (btn400) btn400.addEventListener('click', () => { setActive(btn400); currentStatus = 400; fetchAndRenderAttentionKeys(400, getLimit()); });
+  // 自定义查询
+  const input = document.getElementById('attentionErrCustom');
+  const go = document.getElementById('attentionErrGo');
+  const trigger = () => {
+    if (!input) return;
+    const val = parseInt(input.value, 10);
+    if (!isNaN(val) && val >= 100 && val <= 599) {
+      setActive(null);
+      [btn429, btn403, btn400].forEach(btn=>{ if(btn){ btn.classList.add('bg-gray-200'); btn.classList.remove('bg-primary-600','text-white'); }});
+      currentStatus = val;
+      fetchAndRenderAttentionKeys(val, getLimit());
+    } else {
+      showNotification('请输入100-599之间的HTTP状态码', 'warning');
+    }
+  };
+  if (go) go.addEventListener('click', trigger);
+  if (input) input.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ trigger(); }});
+
+  // limit变化实时刷新当前状态码
+  if (limitInput) limitInput.addEventListener('change', () => {
+    fetchAndRenderAttentionKeys(currentStatus, getLimit());
+  });
+
+  if (btn429) setActive(btn429); // default active
+}
+
 // 初始化
 document.addEventListener("DOMContentLoaded", () => {
   initializePageAnimationsAndEffects();
@@ -1485,10 +1689,12 @@ document.addEventListener("DOMContentLoaded", () => {
   initializeKeyFilterControls();
   initializeGlobalBatchVerificationHandlers();
   initializeKeySelectionListeners();
-  initializeAutoRefreshControls();
   initializeKeyPaginationAndSearch(); // This will also handle initial display
   registerServiceWorker();
   initializeDropdownMenu(); // 初始化下拉菜单
+  initChartControls(); // 初始化图表与时间区间切换
+  initAttentionKeysControls(); // 初始化值得注意的Key错误码切换
+  fetchAndRenderAttentionKeys(429, 10); // 默认渲染429，数量10
 
   // Initial batch actions update might be needed if not covered by displayPage
   // updateBatchActions('valid');
@@ -1744,6 +1950,82 @@ async function showApiCallDetails(
   }
 }
 
+// 获取并显示错误日志详情（通过日志ID）
+async function fetchAndShowErrorDetail(logId) {
+  try {
+    const detail = await fetchAPI(`/api/logs/errors/${logId}/details`);
+    if (!detail) {
+      showResultModal(false, `未找到日志 ${logId}`, false);
+      return;
+    }
+    const container = document.createElement('div');
+    container.className = 'space-y-3 text-sm';
+    const basic = document.createElement('div');
+    basic.innerHTML = `
+      <div><span class="font-semibold">Key:</span> ${detail.gemini_key ? detail.gemini_key.substring(0,4)+'...'+detail.gemini_key.slice(-4) : 'N/A'}</div>
+      <div><span class="font-semibold">模型:</span> ${detail.model_name || 'N/A'}</div>
+      <div><span class="font-semibold">时间:</span> ${detail.request_time ? new Date(detail.request_time).toLocaleString() : 'N/A'}</div>
+      <div><span class="font-semibold">错误类型:</span> ${detail.error_type || 'N/A'}</div>
+    `;
+    const codeBlock = document.createElement('pre');
+    codeBlock.className = 'bg-red-50 border border-red-200 rounded p-3 whitespace-pre-wrap break-words text-red-700';
+    codeBlock.textContent = detail.error_log || '无错误日志内容';
+    const reqBlock = document.createElement('pre');
+    reqBlock.className = 'bg-gray-50 border border-gray-200 rounded p-3 whitespace-pre-wrap break-words';
+    reqBlock.textContent = detail.request_msg || '';
+    container.appendChild(basic);
+    container.appendChild(codeBlock);
+    if (detail.request_msg) container.appendChild(reqBlock);
+    showResultModal(false, container, false);
+  } catch (e) {
+    showResultModal(false, `加载日志详情失败: ${e.message}`, false);
+  }
+}
+
+// 新增：根据 key / 状态码 / 时间窗口(±100秒) 查询并显示错误日志详情
+async function fetchAndShowErrorDetailByInfo(geminiKey, statusCode, timestampISO) {
+  try {
+    if (!geminiKey || !timestampISO) {
+      showResultModal(false, '缺少必要参数，无法查询错误详情', false);
+      return;
+    }
+    const params = new URLSearchParams();
+    params.set('gemini_key', geminiKey);
+    params.set('timestamp', timestampISO);
+    if (statusCode !== null && statusCode !== undefined) {
+      params.set('status_code', String(statusCode));
+    }
+    params.set('window_seconds', '100');
+    const detail = await fetchAPI(`/api/logs/errors/lookup?${params.toString()}`);
+    if (!detail) {
+      showResultModal(false, '未找到匹配的错误日志', false);
+      return;
+    }
+    const container = document.createElement('div');
+    container.className = 'space-y-3 text-sm';
+    const basic = document.createElement('div');
+    basic.innerHTML = `
+      <div><span class="font-semibold">Key:</span> ${detail.gemini_key ? detail.gemini_key.substring(0,4)+'...'+detail.gemini_key.slice(-4) : 'N/A'}</div>
+      <div><span class="font-semibold">模型:</span> ${detail.model_name || 'N/A'}</div>
+      <div><span class="font-semibold">时间:</span> ${detail.request_time ? new Date(detail.request_time).toLocaleString() : 'N/A'}</div>
+      <div><span class="font-semibold">错误码:</span> ${detail.error_code ?? 'N/A'}</div>
+      <div><span class="font-semibold">错误类型:</span> ${detail.error_type || 'N/A'}</div>
+    `;
+    const codeBlock = document.createElement('pre');
+    codeBlock.className = 'bg-red-50 border border-red-200 rounded p-3 whitespace-pre-wrap break-words text-red-700';
+    codeBlock.textContent = detail.error_log || '无错误日志内容';
+    const reqBlock = document.createElement('pre');
+    reqBlock.className = 'bg-gray-50 border border-gray-200 rounded p-3 whitespace-pre-wrap break-words';
+    reqBlock.textContent = detail.request_msg || '';
+    container.appendChild(basic);
+    container.appendChild(codeBlock);
+    if (detail.request_msg) container.appendChild(reqBlock);
+    showResultModal(false, container, false);
+  } catch (e) {
+    showResultModal(false, `加载日志详情失败: ${e.message}`, false);
+  }
+}
+
 // 关闭 API 调用详情模态框
 function closeApiCallDetailsModal() {
   const modal = document.getElementById("apiCallDetailsModal");
@@ -1767,23 +2049,33 @@ function renderApiCallDetails(
     successCalls !== undefined &&
     failureCalls !== undefined
   ) {
+    const total = Number(totalCalls) || 0;
+    const succ = Number(successCalls) || 0;
+    const fail = Number(failureCalls) || 0;
+    const denom = total > 0 ? total : succ + fail;
+    const succRate = denom > 0 ? ((succ / denom) * 100).toFixed(1) : '0.0';
+    const failRate = denom > 0 ? ((fail / denom) * 100).toFixed(1) : '0.0';
+
     summaryHtml = `
-        <div class="mb-4 p-3 bg-white dark:bg-gray-700 rounded-lg"> 
-            <h4 class="font-semibold text-gray-700 dark:text-gray-200 mb-2 text-md border-b pb-1.5 dark:border-gray-600">期间调用概览:</h4>
-            <div class="grid grid-cols-3 gap-2 text-center">
-                <div>
-                    <p class="text-sm text-gray-500 dark:text-gray-400">总计</p>
-                    <p class="text-lg font-bold text-primary-600 dark:text-primary-400">${totalCalls}</p>
-                </div>
-                <div>
-                    <p class="text-sm text-gray-500 dark:text-gray-400">成功</p>
-                    <p class="text-lg font-bold text-success-600 dark:text-success-400">${successCalls}</p>
-                </div>
-                <div>
-                    <p class="text-sm text-gray-500 dark:text-gray-400">失败</p>
-                    <p class="text-lg font-bold text-danger-600 dark:text-danger-400">${failureCalls}</p>
-                </div>
-            </div>
+        <div class="mb-4">
+          <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700 rounded-lg overflow-hidden">
+            <thead class="bg-gray-50 dark:bg-gray-700/50">
+              <tr>
+                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">总计</th>
+                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">成功</th>
+                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">失败</th>
+                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">成功率</th>
+              </tr>
+            </thead>
+            <tbody class="bg-white dark:bg-gray-800">
+              <tr>
+                <td class="px-4 py-2 whitespace-nowrap text-sm font-bold text-primary-600 dark:text-primary-400">${totalCalls}</td>
+                <td class="px-4 py-2 whitespace-nowrap text-sm font-bold text-success-600 dark:text-success-400">${successCalls}</td>
+                <td class="px-4 py-2 whitespace-nowrap text-sm font-bold text-danger-600 dark:text-danger-400">${failureCalls}</td>
+                <td class="px-4 py-2 whitespace-nowrap text-sm font-bold text-success-600 dark:text-success-400">${succRate}%</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
     `;
   }
@@ -1807,7 +2099,10 @@ function renderApiCallDetails(
                     <th scope="col" class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">时间</th>
                     <th scope="col" class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">密钥 (部分)</th>
                     <th scope="col" class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">模型</th>
+                    <th scope="col" class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">状态码</th>
+                    <th scope="col" class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">耗时(ms)</th>
                     <th scope="col" class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">状态</th>
+                    <th scope="col" class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">详情</th>
                 </tr>
             </thead>
             <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
@@ -1828,17 +2123,25 @@ function renderApiCallDetails(
     const statusIcon =
       call.status === "success" ? "fa-check-circle" : "fa-times-circle";
 
+const detailsBtn =
+      call.status === "failure"
+        ? `<button class="px-2 py-1 rounded bg-red-100 hover:bg-red-200 text-red-700 text-xs" onclick="fetchAndShowErrorDetailByInfo('${call.key}', ${call.status_code ?? 'null'}, '${call.timestamp}')">
+             <i class="fas fa-info-circle mr-1"></i>详情
+           </button>`
+        : "-";
+
     tableHtml += `
             <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/30">
                 <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">${timestamp}</td>
                 <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400 font-mono">${keyDisplay}</td>
-                <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">${
-                  call.model || "N/A"
-                }</td>
+                <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">${call.model || "N/A"}</td>
+                <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">${call.status_code ?? "-"}</td>
+                <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">${call.latency_ms ?? "-"}</td>
                 <td class="px-4 py-2 whitespace-nowrap text-sm ${statusClass}">
                     <i class="fas ${statusIcon} mr-1"></i>
                     ${call.status}
                 </td>
+                <td class="px-4 py-2 whitespace-nowrap text-sm">${detailsBtn}</td>
             </tr>
         `;
   });
@@ -1867,67 +2170,122 @@ window.showKeyUsageDetails = async function (key) {
     return;
   }
 
-  // renderKeyUsageDetails 变为 showKeyUsageDetails 的局部函数
-  function renderKeyUsageDetails(data, container) {
-    if (!data || Object.keys(data).length === 0) {
+  // 构建内容框架（时间范围按钮 + 图表 + 表格容器）
+  const controlsHtml = `
+    <div class="flex items-center gap-2 mb-3 text-xs">
+      <button id="keyBtn1h" class="px-2 py-1 rounded bg-gray-200 hover:bg-gray-300 text-gray-700">1小时</button>
+      <button id="keyBtn8h" class="px-2 py-1 rounded bg-gray-200 hover:bg-gray-300 text-gray-700">8小时</button>
+      <button id="keyBtn24h" class="px-2 py-1 rounded bg-gray-200 hover:bg-gray-300 text-gray-700">24小时</button>
+    </div>
+    <div class="h-48 mb-4">
+      <canvas id="keyUsageChart"></canvas>
+    </div>
+    <div id="keyUsageTable"></div>`;
+  contentArea.innerHTML = controlsHtml;
+
+  // 设置标题
+  titleElement.textContent = `密钥 ${keyDisplay} - 请求详情`;
+
+  // 显示模态框
+  modal.classList.remove("hidden");
+
+  let keyUsageChart = null;
+  function buildKeyChartConfig(labels, successData, failureData) {
+    return buildChartConfig(labels, successData, failureData);
+  }
+  function bucketizeKeyDetails(period, details) {
+    return bucketizeDetails(period, details);
+  }
+  function renderKeyUsageTable(data) {
+    const container = document.getElementById('keyUsageTable');
+    if (!container) return;
+    if (!data || data.length === 0) {
       container.innerHTML = `
                 <div class="text-center py-10 text-gray-500">
                     <i class="fas fa-info-circle text-3xl"></i>
-                    <p class="mt-2">该密钥在最近24小时内没有调用记录。</p>
+                    <p class="mt-2">该时间段内没有 API 调用记录。</p>
                 </div>`;
       return;
     }
     let tableHtml = `
             <table class="min-w-full divide-y divide-gray-200">
                 <thead class="bg-gray-50">
-                    <tr>
-                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">模型名称</th>
-                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">调用次数 (24h)</th>
-                    </tr>
+                  <tr>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">时间</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">模型</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">状态码</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">耗时(ms)</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">状态</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">详情</th>
+                  </tr>
                 </thead>
                 <tbody class="bg-white divide-y divide-gray-200">`;
-    const sortedModels = Object.entries(data).sort(
-      ([, countA], [, countB]) => countB - countA
-    );
-    sortedModels.forEach(([model, count]) => {
+    data.forEach((row) => {
+      const timestamp = new Date(row.timestamp).toLocaleString();
+      const statusClass = row.status === 'success' ? 'text-success-600' : 'text-danger-600';
+      const statusIcon = row.status === 'success' ? 'fa-check-circle' : 'fa-times-circle';
+      const detailsBtn = row.status === 'failure'
+        ? `<button class="px-2 py-1 rounded bg-red-100 hover:bg-red-200 text-red-700 text-xs" onclick="fetchAndShowErrorDetailByInfo('${row.key}', ${row.status_code ?? 'null'}, '${row.timestamp}')">
+             <i class="fas fa-info-circle mr-1"></i>详情
+           </button>`
+        : '-';
       tableHtml += `
-                <tr>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${model}</td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${count}</td>
-                </tr>`;
+        <tr>
+          <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${timestamp}</td>
+          <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${row.model || 'N/A'}</td>
+          <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${row.status_code ?? '-'}</td>
+          <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${row.latency_ms ?? '-'}</td>
+          <td class="px-6 py-4 whitespace-nowrap text-sm ${statusClass}"><i class="fas ${statusIcon} mr-1"></i>${row.status}</td>
+          <td class="px-6 py-4 whitespace-nowrap text-sm">${detailsBtn}</td>
+        </tr>`;
     });
-    tableHtml += `
-                </tbody>
-            </table>`;
+    tableHtml += `</tbody></table>`;
     container.innerHTML = tableHtml;
   }
-
-  // 设置标题
-  titleElement.textContent = `密钥 ${keyDisplay} - 最近24小时请求详情`;
-
-  // 显示模态框并设置加载状态
-  modal.classList.remove("hidden");
-  contentArea.innerHTML = `
-        <div class="text-center py-10">
-             <i class="fas fa-spinner fa-spin text-primary-600 text-3xl"></i>
-             <p class="text-gray-500 mt-2">加载中...</p>
-        </div>`;
-
-  try {
-    const data = await fetchAPI(`/api/key-usage-details/${key}`);
-    if (data) {
-      renderKeyUsageDetails(data, contentArea);
-    } else {
-      renderKeyUsageDetails({}, contentArea); // Show empty state if no data
-    }
-  } catch (apiError) {
-    console.error("获取密钥使用详情失败:", apiError);
-    contentArea.innerHTML = `
-            <div class="text-center py-10 text-danger-500">
+  async function renderForPeriod(period) {
+    try {
+      const details = await fetchAPI(`/api/stats/key-details?key=${encodeURIComponent(key)}&period=${period}`);
+      const { labels, successData, failureData } = bucketizeKeyDetails(period, details || []);
+      const canvas = document.getElementById('keyUsageChart');
+      if (canvas && typeof Chart !== 'undefined') {
+        const cfg = buildKeyChartConfig(labels, successData, failureData);
+        if (keyUsageChart) keyUsageChart.destroy();
+        keyUsageChart = new Chart(canvas.getContext('2d'), cfg);
+      }
+      renderKeyUsageTable(details || []);
+    } catch (e) {
+      console.error('加载密钥期内详情失败:', e);
+      const tableContainer = document.getElementById('keyUsageTable');
+      if (tableContainer) {
+        tableContainer.innerHTML = `<div class="text-center py-10 text-danger-500">
                 <i class="fas fa-exclamation-triangle text-3xl"></i>
-                <p class="mt-2">加载失败: ${apiError.message}</p>
+                <p class="mt-2">加载失败: ${e.message}</p>
             </div>`;
+      }
+    }
   }
+
+  // 绑定按钮事件与默认加载
+  const btn1h = document.getElementById('keyBtn1h');
+  const btn8h = document.getElementById('keyBtn8h');
+  const btn24h = document.getElementById('keyBtn24h');
+  const setActive = (activeBtn) => {
+    [btn1h, btn8h, btn24h].forEach((btn) => {
+      if (!btn) return;
+      if (btn === activeBtn) {
+        btn.classList.remove('bg-gray-200');
+        btn.classList.add('bg-primary-600','text-white');
+      } else {
+        btn.classList.add('bg-gray-200');
+        btn.classList.remove('bg-primary-600','text-white');
+      }
+    });
+  };
+  if (btn1h) btn1h.addEventListener('click', () => { setActive(btn1h); renderForPeriod('1h'); });
+  if (btn8h) btn8h.addEventListener('click', () => { setActive(btn8h); renderForPeriod('8h'); });
+  if (btn24h) btn24h.addEventListener('click', () => { setActive(btn24h); renderForPeriod('24h'); });
+  if (btn1h) setActive(btn1h);
+  renderForPeriod('1h');
 };
 
 // 关闭密钥使用详情模态框
