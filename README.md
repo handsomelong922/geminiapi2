@@ -220,6 +220,7 @@ This endpoint is directly forwarded to official OpenAI Compatible API format end
 | `UPLOAD_PROVIDER` | Image upload provider: `smms`, `picgo`, `cloudflare_imgbed` | `smms` |
 | `SMMS_SECRET_TOKEN` | SM.MS API Token | `your-smms-token` |
 | `PICGO_API_KEY` | PicoGo API Key | `your-picogo-apikey` |
+| `PICGO_API_URL` | PicoGo API Server URL | `https://www.picgo.net/api/1/upload` |
 | `CLOUDFLARE_IMGBED_URL` | CloudFlare ImgBed upload URL | `https://xxxxxxx.pages.dev/upload` |
 | `CLOUDFLARE_IMGBED_AUTH_CODE`| CloudFlare ImgBed auth key | `your-cloudflare-imgber-auth-code` |
 | `CLOUDFLARE_IMGBED_UPLOAD_FOLDER`| CloudFlare ImgBed upload folder | `""` |
