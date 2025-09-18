@@ -9,7 +9,7 @@ MAX_RETRIES = 3  # 最大重试次数
 
 # 模型相关常量
 SUPPORTED_ROLES = ["user", "model", "system"]
-DEFAULT_MODEL = "gemini-1.5-flash"
+DEFAULT_MODEL = "gemini-2.5-flash-lite"
 DEFAULT_TEMPERATURE = 0.7
 DEFAULT_MAX_TOKENS = 8192
 DEFAULT_TOP_P = 0.9
@@ -27,7 +27,7 @@ DEFAULT_CREATE_IMAGE_MODEL = "imagen-3.0-generate-002"
 VALID_IMAGE_RATIOS = ["1:1", "3:4", "4:3", "9:16", "16:9"]
 
 # 上传提供商
-UPLOAD_PROVIDERS = ["smms", "picgo", "cloudflare_imgbed"]
+UPLOAD_PROVIDERS = ["smms", "picgo", "cloudflare_imgbed", "aliyun_oss"]
 DEFAULT_UPLOAD_PROVIDER = "smms"
 
 # 流式输出相关常量

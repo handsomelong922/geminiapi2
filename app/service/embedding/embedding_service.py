@@ -1,5 +1,4 @@
 import datetime
-import re
 import time
 from typing import List, Union
 
@@ -56,13 +55,9 @@ class EmbeddingService:
             raise e
         except Exception as e:
             is_success = False
+            status_code = 500
             error_log_msg = f"Generic error: {e}"
             logger.error(f"Error creating embedding (Exception): {error_log_msg}")
-            match = re.search(r"status code (\d+)", str(e))
-            if match:
-                status_code = int(match.group(1))
-            else:
-                status_code = 500
             raise e
         finally:
             end_time = time.perf_counter()

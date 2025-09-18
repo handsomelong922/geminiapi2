@@ -2,7 +2,6 @@
 
 import datetime
 import json
-import re
 import time
 from typing import Any, AsyncGenerator, Dict, List
 
@@ -278,13 +277,9 @@ class GeminiChatService:
             return self.response_handler.handle_response(response, model, stream=False)
         except Exception as e:
             is_success = False
-            error_log_msg = str(e)
+            status_code = e.args[0]
+            error_log_msg = e.args[1]
             logger.error(f"Normal API call failed with error: {error_log_msg}")
-            match = re.search(r"status code (\d+)", error_log_msg)
-            if match:
-                status_code = int(match.group(1))
-            else:
-                status_code = 500
 
             await add_error_log(
                 gemini_key=api_key,
@@ -292,7 +287,7 @@ class GeminiChatService:
                 error_type="gemini-chat-non-stream",
                 error_log=error_log_msg,
                 error_code=status_code,
-                request_msg=payload,
+                request_msg=payload if settings.ERROR_LOG_RECORD_REQUEST_BODY else None,
                 request_datetime=request_datetime,
             )
             raise e
@@ -356,15 +351,11 @@ class GeminiChatService:
             except Exception as e:
                 retries += 1
                 is_success = False
-                error_log_msg = str(e)
+                status_code = e.args[0]
+                error_log_msg = e.args[1]
                 logger.warning(
                     f"Streaming API call failed with error: {error_log_msg}. Attempt {retries} of {max_retries}"
                 )
-                match = re.search(r"status code (\d+)", error_log_msg)
-                if match:
-                    status_code = int(match.group(1))
-                else:
-                    status_code = 500
 
                 await add_error_log(
                     gemini_key=current_attempt_key,
@@ -372,7 +363,9 @@ class GeminiChatService:
                     error_type="gemini-chat-stream",
                     error_log=error_log_msg,
                     error_code=status_code,
-                    request_msg=payload,
+                    request_msg=(
+                        payload if settings.ERROR_LOG_RECORD_REQUEST_BODY else None
+                    ),
                     request_datetime=request_datetime,
                 )
 
@@ -385,11 +378,11 @@ class GeminiChatService:
                     )
                 else:
                     logger.error(f"No valid API key available after {retries} retries.")
-                    break
+                    raise
 
                 if retries >= max_retries:
                     logger.error(f"Max retries ({max_retries}) reached for streaming.")
-                    break
+                    raise
             finally:
                 end_time = time.perf_counter()
                 latency_ms = int((end_time - start_time) * 1000)

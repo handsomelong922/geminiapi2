@@ -6,7 +6,7 @@ import datetime
 import json
 from typing import Any, Dict, List, Type, get_args, get_origin
 
-from pydantic import ValidationError, ValidationInfo, field_validator, Field
+from pydantic import Field, ValidationError, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings
 from sqlalchemy import insert, select, update
 
@@ -51,8 +51,8 @@ class Settings(BaseSettings):
         return v
 
     # API相关配置
-    API_KEYS: List[str]=[]
-    ALLOWED_TOKENS: List[str]=[]
+    API_KEYS: List[str] = []
+    ALLOWED_TOKENS: List[str] = []
     BASE_URL: str = f"https://generativelanguage.googleapis.com/{API_VERSION}"
     AUTH_TOKEN: str = ""
     MAX_FAILURES: int = 3
@@ -62,7 +62,9 @@ class Settings(BaseSettings):
     PROXIES: List[str] = []
     PROXIES_USE_CONSISTENCY_HASH_BY_API_KEY: bool = True  # 是否使用一致性哈希来选择代理
     VERTEX_API_KEYS: List[str] = []
-    VERTEX_EXPRESS_BASE_URL: str = "https://aiplatform.googleapis.com/v1beta1/publishers/google"
+    VERTEX_EXPRESS_BASE_URL: str = (
+        "https://aiplatform.googleapis.com/v1beta1/publishers/google"
+    )
 
     # 智能路由配置
     URL_NORMALIZATION_ENABLED: bool = False  # 是否启用智能路由映射功能
@@ -71,13 +73,19 @@ class Settings(BaseSettings):
     CUSTOM_HEADERS: Dict[str, str] = {}
 
     # 模型相关配置
-    SEARCH_MODELS: List[str] = ["gemini-2.0-flash-exp"]
-    IMAGE_MODELS: List[str] = ["gemini-2.0-flash-exp"]
+    SEARCH_MODELS: List[str] = ["gemini-2.5-flash", "gemini-2.5-pro"]
+    IMAGE_MODELS: List[str] = ["gemini-2.0-flash-exp", "gemini-2.5-flash-image-preview"]
     FILTERED_MODELS: List[str] = DEFAULT_FILTER_MODELS
     TOOLS_CODE_EXECUTION_ENABLED: bool = False
     # 是否启用网址上下文
     URL_CONTEXT_ENABLED: bool = False
-    URL_CONTEXT_MODELS: List[str] = ["gemini-2.5-pro","gemini-2.5-flash","gemini-2.5-flash-lite","gemini-2.0-flash","gemini-2.0-flash-live-001"]
+    URL_CONTEXT_MODELS: List[str] = [
+        "gemini-2.5-pro",
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-live-001",
+    ]
     SHOW_SEARCH_LINK: bool = True
     SHOW_THINKING_PROCESS: bool = True
     THINKING_MODELS: List[str] = []
@@ -98,6 +106,13 @@ class Settings(BaseSettings):
     CLOUDFLARE_IMGBED_URL: str = ""
     CLOUDFLARE_IMGBED_AUTH_CODE: str = ""
     CLOUDFLARE_IMGBED_UPLOAD_FOLDER: str = ""
+    # 阿里云OSS配置
+    OSS_ENDPOINT: str = ""
+    OSS_ENDPOINT_INNER: str = ""
+    OSS_ACCESS_KEY: str = ""
+    OSS_ACCESS_KEY_SECRET: str = ""
+    OSS_BUCKET_NAME: str = ""
+    OSS_REGION: str = ""
 
     # 流式输出优化器配置
     STREAM_OPTIMIZER_ENABLED: bool = False
@@ -121,6 +136,7 @@ class Settings(BaseSettings):
 
     # 日志配置
     LOG_LEVEL: str = "INFO"
+    ERROR_LOG_RECORD_REQUEST_BODY: bool = False
     AUTO_DELETE_ERROR_LOGS_ENABLED: bool = True
     AUTO_DELETE_ERROR_LOGS_DAYS: int = 7
     AUTO_DELETE_REQUEST_LOGS_ENABLED: bool = False
@@ -137,7 +153,7 @@ class Settings(BaseSettings):
         default=3600,
         ge=300,
         le=86400,
-        description="Admin session expiration time in seconds (5 minutes to 24 hours)"
+        description="Admin session expiration time in seconds (5 minutes to 24 hours)",
     )
 
     def __init__(self, **kwargs):
@@ -169,7 +185,9 @@ def _parse_db_value(key: str, db_value: str, target_type: Type) -> Any:
                     if isinstance(parsed, list):
                         return [str(item) for item in parsed]
                 except json.JSONDecodeError:
-                    return [item.strip() for item in db_value.split(",") if item.strip()]
+                    return [
+                        item.strip() for item in db_value.split(",") if item.strip()
+                    ]
                 logger.warning(
                     f"Could not parse '{db_value}' as List[str] for key '{key}', falling back to comma split or empty list."
                 )
@@ -221,7 +239,9 @@ def _parse_db_value(key: str, db_value: str, target_type: Type) -> Any:
                             f"Parsed DB value for key '{key}' is not a dictionary type. Value: {db_value}"
                         )
                 except json.JSONDecodeError:
-                     logger.error(f"Could not parse '{db_value}' as Dict[str, str] for key '{key}'. Returning empty dict.")
+                    logger.error(
+                        f"Could not parse '{db_value}' as Dict[str, str] for key '{key}'. Returning empty dict."
+                    )
                 return parsed_dict
             # 处理 Dict[str, float]
             elif args and args == (str, float):
@@ -243,7 +263,9 @@ def _parse_db_value(key: str, db_value: str, target_type: Type) -> Any:
                             corrected_db_value = db_value.replace("'", '"')
                             parsed = json.loads(corrected_db_value)
                             if isinstance(parsed, dict):
-                                parsed_dict = {str(k): float(v) for k, v in parsed.items()}
+                                parsed_dict = {
+                                    str(k): float(v) for k, v in parsed.items()
+                                }
                             else:
                                 logger.warning(
                                     f"Parsed DB value (after quote replacement) for key '{key}' is not a dictionary type. Value: {corrected_db_value}"
@@ -404,9 +426,7 @@ async def sync_initial_settings():
 
             # 序列化值为字符串或 JSON 字符串
             if isinstance(value, (list, dict)):
-                db_value = json.dumps(
-                    value, ensure_ascii=False
-                )
+                db_value = json.dumps(value, ensure_ascii=False)
             elif isinstance(value, bool):
                 db_value = str(value).lower()
             elif value is None:
