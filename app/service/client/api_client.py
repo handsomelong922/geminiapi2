@@ -99,34 +99,21 @@ class GeminiApiClient(ApiClient):
 
         async with httpx.AsyncClient(timeout=timeout, proxy=proxy_to_use) as client:
             url = f"{self.base_url}/models/{model}:generateContent?key={api_key}"
+            response = await client.post(url, json=payload, headers=headers)
 
-            try:
-                response = await client.post(url, json=payload, headers=headers)
+            if response.status_code != 200:
+                error_content = response.text
+                logger.error(
+                    f"API call failed - Status: {response.status_code}, Content: {error_content}"
+                )
+                raise Exception(response.status_code, error_content)
+            response_data = response.json()
 
-                if response.status_code != 200:
-                    error_content = response.text
-                    logger.error(
-                        f"API call failed - Status: {response.status_code}, Content: {error_content}"
-                    )
-                    raise Exception(response.status_code, error_content)
+            # 检查响应结构的基本信息
+            if not response_data.get("candidates"):
+                logger.warning("No candidates found in API response")
 
-                response_data = response.json()
-
-                # 检查响应结构的基本信息
-                if not response_data.get("candidates"):
-                    logger.warning("No candidates found in API response")
-
-                return response_data
-
-            except httpx.TimeoutException as e:
-                logger.error(f"Request timeout: {e}")
-                raise Exception(500, f"Request timeout: {e}")
-            except httpx.RequestError as e:
-                logger.error(f"Request error: {e}")
-                raise Exception(500, f"Request error: {e}")
-            except Exception as e:
-                logger.error(f"Unexpected error: {e}")
-                raise Exception(500, f"Unexpected error: {e}")
+            return response_data
 
     async def stream_generate_content(
         self, payload: Dict[str, Any], model: str, api_key: str
@@ -196,28 +183,14 @@ class GeminiApiClient(ApiClient):
         headers = self._prepare_headers()
         async with httpx.AsyncClient(timeout=timeout, proxy=proxy_to_use) as client:
             url = f"{self.base_url}/models/{model}:embedContent?key={api_key}"
-
-            try:
-                response = await client.post(url, json=payload, headers=headers)
-
-                if response.status_code != 200:
-                    error_content = response.text
-                    logger.error(
-                        f"Embedding API call failed - Status: {response.status_code}, Content: {error_content}"
-                    )
-                    raise Exception(response.status_code, error_content)
-
-                return response.json()
-
-            except httpx.TimeoutException as e:
-                logger.error(f"Embedding request timeout: {e}")
-                raise Exception(500, f"Request timeout: {e}")
-            except httpx.RequestError as e:
-                logger.error(f"Embedding request error: {e}")
-                raise Exception(500, f"Request error: {e}")
-            except Exception as e:
-                logger.error(f"Unexpected embedding error: {e}")
-                raise Exception(500, f"Unexpected embedding error: {e}")
+            response = await client.post(url, json=payload, headers=headers)
+            if response.status_code != 200:
+                error_content = response.text
+                logger.error(
+                    f"Embedding API call failed - Status: {response.status_code}, Content: {error_content}"
+                )
+                raise Exception(response.status_code, error_content)
+            return response.json()
 
     async def batch_embed_contents(
         self, payload: Dict[str, Any], model: str, api_key: str
@@ -237,28 +210,14 @@ class GeminiApiClient(ApiClient):
         headers = self._prepare_headers()
         async with httpx.AsyncClient(timeout=timeout, proxy=proxy_to_use) as client:
             url = f"{self.base_url}/models/{model}:batchEmbedContents?key={api_key}"
-
-            try:
-                response = await client.post(url, json=payload, headers=headers)
-
-                if response.status_code != 200:
-                    error_content = response.text
-                    logger.error(
-                        f"Batch embedding API call failed - Status: {response.status_code}, Content: {error_content}"
-                    )
-                    raise Exception(response.status_code, error_content)
-
-                return response.json()
-
-            except httpx.TimeoutException as e:
-                logger.error(f"Batch embedding request timeout: {e}")
-                raise Exception(500, f"Request timeout: {e}")
-            except httpx.RequestError as e:
-                logger.error(f"Batch embedding request error: {e}")
-                raise Exception(500, f"Request error: {e}")
-            except Exception as e:
-                logger.error(f"Unexpected batch embedding error: {e}")
-                raise Exception(500, f"Unexpected batch embedding error: {e}")
+            response = await client.post(url, json=payload, headers=headers)
+            if response.status_code != 200:
+                error_content = response.text
+                logger.error(
+                    f"Batch embedding API call failed - Status: {response.status_code}, Content: {error_content}"
+                )
+                raise Exception(response.status_code, error_content)
+            return response.json()
 
 
 class OpenaiApiClient(ApiClient):

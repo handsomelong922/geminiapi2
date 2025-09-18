@@ -88,7 +88,7 @@ class OpenAICompatiableService:
                 error_type="openai-compatiable-non-stream",
                 error_log=error_log_msg,
                 error_code=status_code,
-                request_msg=request,
+                request_msg=request if settings.ERROR_LOG_RECORD_REQUEST_BODY else None,
             )
             raise e
         finally:

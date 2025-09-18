@@ -515,7 +515,7 @@ async def verify_key(
                     f"Verification exception for key: {redact_key_for_logging(api_key)}, incrementing failure count"
                 )
 
-        return JSONResponse({"status": "invalid", "error": str(e)})
+        return JSONResponse({"status": "invalid", "error": e.args[1]})
 
 
 @router.post("/verify-selected-keys")
@@ -559,7 +559,7 @@ async def verify_selected_keys(
             await key_manager.reset_key_failure_count(api_key)
             return api_key, "valid", None
         except Exception as e:
-            error_message = str(e)
+            error_message = e.args[1]
             logger.warning(
                 f"Key verification failed for {redact_key_for_logging(api_key)}: {error_message}"
             )
@@ -574,7 +574,7 @@ async def verify_selected_keys(
                     logger.warning(
                         f"Bulk verification exception for key: {redact_key_for_logging(api_key)}, initializing failure count to 1"
                     )
-            failed_keys[api_key] = error_message
+            failed_keys[api_key] = {"error_message": e.args[1], "error_code": e.args[0]}
             return api_key, "invalid", error_message
 
     tasks = [_verify_single_key(key) for key in keys_to_verify]
@@ -585,11 +585,6 @@ async def verify_selected_keys(
             logger.error(
                 f"An unexpected error occurred during bulk verification task: {result}"
             )
-        elif result:
-            if not isinstance(result, Exception) and result:
-                key, status, error = result
-            elif isinstance(result, Exception):
-                logger.error(f"Task execution error during bulk verification: {result}")
 
     valid_count = len(successful_keys)
     invalid_count = len(failed_keys)
