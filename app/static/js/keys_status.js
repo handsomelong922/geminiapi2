@@ -2529,3 +2529,73 @@ function showVerifyModalForAllKeys(allKeys) {
   // 显示模态框
   modalElement.classList.remove("hidden");
 }
+
+
+// 执行验证所有密钥
+async function executeVerifyAllKeys(allKeys) {
+  closeVerifyModal();
+  
+  // 获取批次大小
+  const batchSizeInput = document.getElementById("batchSize");
+  const batchSize = parseInt(batchSizeInput.value, 10) || 10;
+  
+  // 开始批量验证
+  showProgressModal(`批量验证所有 ${allKeys.length} 个密钥`);
+  
+  let allSuccessfulKeys = [];
+  let allFailedKeys = {};
+  let processedCount = 0;
+  
+  for (let i = 0; i < allKeys.length; i += batchSize) {
+    const batch = allKeys.slice(i, i + batchSize);
+    const progressText = `正在验证批次 ${Math.floor(i / batchSize) + 1} / ${Math.ceil(allKeys.length / batchSize)} (密钥 ${i + 1}-${Math.min(i + batchSize, allKeys.length)})`;
+    
+    updateProgress(i, allKeys.length, progressText);
+    addProgressLog(`处理批次: ${batch.length}个密钥...`);
+    
+    try {
+      const options = {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ keys: batch }),
+      };
+      const data = await fetchAPI(`/gemini/v1beta/verify-selected-keys`, options);
+      
+      if (data) {
+        if (data.successful_keys && data.successful_keys.length > 0) {
+          allSuccessfulKeys = allSuccessfulKeys.concat(data.successful_keys);
+          addProgressLog(`✅ 批次成功: ${data.successful_keys.length} 个`);
+        }
+        if (data.failed_keys && Object.keys(data.failed_keys).length > 0) {
+          Object.assign(allFailedKeys, data.failed_keys);
+          addProgressLog(`❌ 批次失败: ${Object.keys(data.failed_keys).length} 个`, true);
+        }
+      } else {
+        addProgressLog(`- 批次返回空数据`, true);
+      }
+    } catch (apiError) {
+      addProgressLog(`❌ 批次请求失败: ${apiError.message}`, true);
+      // 将此批次的所有密钥标记为失败
+      batch.forEach(key => {
+        allFailedKeys[key] = apiError.message;
+      });
+    }
+    processedCount += batch.length;
+    updateProgress(processedCount, allKeys.length, progressText);
+  }
+  
+  updateProgress(
+    allKeys.length,
+    allKeys.length,
+    `所有批次验证完成！`
+  );
+  
+  // 关闭进度模态框并显示最终结果
+  closeProgressModal(false);
+  showVerificationResultModal({
+    successful_keys: allSuccessfulKeys,
+    failed_keys: allFailedKeys,
+    valid_count: allSuccessfulKeys.length,
+    invalid_count: Object.keys(allFailedKeys).length
+  });
+}
