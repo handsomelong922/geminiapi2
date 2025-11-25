@@ -40,7 +40,7 @@ async def delete_old_request_logs_task():
 
         result = await database.execute(query)
         logger.info(
-            f"Request logs older than {cutoff_date} potentially deleted. Rows affected: {result.rowcount if result else 'N/A'}"
+            f"Request logs older than {cutoff_date} potentially deleted. Rows affected: {result}"
         )
 
     except Exception as e:
